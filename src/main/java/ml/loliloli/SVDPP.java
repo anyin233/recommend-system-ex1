@@ -19,6 +19,7 @@ public class SVDPP {
     private INDArray action;
     private INDArray bi, bu, user, item, y;
     private final List<History> historyList;
+    private final double mu;
 
 
     private class Y{
@@ -53,6 +54,7 @@ public class SVDPP {
         prepareMat();
         this.f = f;
         historyList = new ArrayList<>();
+        mu = ((double) this.UIM.sumNumber()) / ((double) action.sumNumber());
     }
 
     private void prepareMat() {
@@ -72,11 +74,9 @@ public class SVDPP {
         action = Nd4j.createFromArray(action_temp);
     }
 
-    public void fit(int epoch, double lr, double ku, double ki, boolean debug){
+    public void fit(int epoch, double lr, double ku, double ki, boolean debug, INDArray eval){
         bi = Nd4j.rand(1, itemCount);
         bu = Nd4j.rand(userCount, 1);
-
-        double mu = ((double) UIM.sumNumber()) / ((double) action.sumNumber());
 
         user = randomInit(-0.01, 0.01, userCount, f);
         item = randomInit(-0.01, 0.01, itemCount, f);
@@ -86,25 +86,55 @@ public class SVDPP {
         for(var ep = 0; ep < epoch; ep++){
             Y sumY = getY();
             INDArray predict = ((user.add(sumY.sumY)).mmul(item.transpose())).add(bu).add(bi).add(mu);
-            double[][] pred_temp = predict.castTo(DataType.DOUBLE).toDoubleMatrix();
-            for (var i = 0; i < pred_temp.length; ++i){
-                for (var j = 0; j < pred_temp[i].length; ++j){
-                    if (pred_temp[i][j] > 5){
-                        pred_temp[i][j] = 5;
-                    }else if (pred_temp[i][j] < 1){
-                        pred_temp[i][j] = 1;
-                    }
-                }
-            }
-            predict = Nd4j.createFromArray(pred_temp);
-            Loss loss = rmse(predict);
+            computeLoss(predict, UIM, action);
+            Loss loss = computeLoss(predict, UIM, action);
             updateParam(loss, lr, ku, ki, sumY);
             History history = new History(loss.loss, ep);
             historyList.add(history);
             if (debug){
-                System.out.println(history);
+                System.out.print(history);
+                if ((ep + 1) % 10 == 0){
+                    var evalLoss = eval(eval);
+                    System.out.printf(" eval rmse loss: %f%n", evalLoss);
+                }else{
+                    System.out.print("\n");
+                }
             }
         }
+    }
+
+    private Loss computeLoss(INDArray predict,INDArray UIM, INDArray action) {
+        double[][] pred_temp = predict.castTo(DataType.DOUBLE).toDoubleMatrix();
+        for (var i = 0; i < pred_temp.length; ++i){
+            for (var j = 0; j < pred_temp[i].length; ++j){
+                if (pred_temp[i][j] > 5){
+                    pred_temp[i][j] = 5;
+                }else if (pred_temp[i][j] < 1){
+                    pred_temp[i][j] = 1;
+                }
+            }
+        }
+        predict = Nd4j.createFromArray(pred_temp);
+        return rmse(predict, UIM, action);
+    }
+
+    public double eval(INDArray groundTruth){
+        Y sumY = getY();
+        double[][] evalAction = new double[groundTruth.rows()][groundTruth.columns()];
+        for (var i = 0; i < evalAction.length; ++i){
+            for (var j = 0; j < evalAction[i].length; ++j){
+                if (groundTruth.getDouble(i, j) > 0){
+                    evalAction[i][j] = 1;
+                }else{
+                    evalAction[i][j] = 0;
+                }
+            }
+        }
+        INDArray evalAct = Nd4j.createFromArray(evalAction);
+        var predict = ((user.add(sumY.sumY)).mmul(item.transpose())).add(bu).add(bi).add(mu);
+        //predict.muli(evalAct);
+        Loss loss = computeLoss(predict, groundTruth, evalAct);
+        return loss.loss;
     }
 
     private INDArray randomInit(double min, double max, int ...shape){
@@ -152,7 +182,7 @@ public class SVDPP {
         return y;
     }
 
-    private Loss rmse(INDArray predict){
+    private Loss rmse(INDArray predict, INDArray UIM, INDArray action){
         Loss e = new Loss();
         e.error = UIM.sub(predict);
         e.loss = (double) (e.error.mul(e.error).mul(action)).sumNumber() / (double) action.sumNumber();

@@ -29,26 +29,38 @@ public class Recommend {
         int itemCount = data.get(1);
         System.out.printf("user: %d, item: %d%n", userCount, itemCount);
         int[][] UIM_temp = new int[userCount][itemCount];
+        int[][] UIM_eval = new int[userCount][itemCount];
+        int train = 0;
+        int eval = 0;
         File dataSource = new File("dataset/u.data");
         InputStreamReader dataSourceStream = new InputStreamReader(
                 new FileInputStream(dataSource)
         );
         BufferedReader dataSourceReader = new BufferedReader(dataSourceStream);
         line = dataSourceReader.readLine();
+        Random rand = new Random();
         while (line != null){
             String[] records = line.split("\t");
             int user = Integer.parseInt(records[0]) - 1;
             int item = Integer.parseInt(records[1]) - 1;
             int rate = Integer.parseInt(records[2]);
-            UIM_temp[user][item] = rate;
+            if (rand.nextDouble() > 0.8){
+                UIM_eval[user][item] = rate;
+                eval += 1;
+            }else{
+                UIM_temp[user][item] = rate;
+                train += 1;
+            }
             line = dataSourceReader.readLine();
         }
-        System.out.println("finished, start training");
+        System.out.printf("Total %d samples, %d train, %d eval%n", train+eval, train, eval);
+        System.out.println("data loading finished, start training");
 
 
         INDArray UIM = Nd4j.createFromArray(UIM_temp);
+        INDArray UIMEval = Nd4j.createFromArray(UIM_eval);
         SVDPP svdpp = new SVDPP(UIM.toIntMatrix(), 30);
 
-        svdpp.fit(20, 0.01, 0.1, 0.1, true);
+        svdpp.fit(200, 0.001, 0.1, 0.1, true, UIMEval);
     }
 }
